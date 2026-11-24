@@ -21,7 +21,7 @@
             const FluxDispatcher = bunny.metro.common.FluxDispatcher;
             if (!channelId || !messages?.length || !FluxDispatcher) return;
 
-            messages.slice(-30).forEach(msg => {
+            messages.slice(-15).forEach(msg => {
                 FluxDispatcher.dispatch({
                     type: "MESSAGE_UPDATE",
                     message: typeof msg.toJS === "function" ? msg.toJS() : { ...msg }
@@ -30,20 +30,28 @@
         } catch (_) {}
     };
 
+    const sync = () => {
+        apply();
+        refreshOpenChannel();
+    };
+
     let sub;
+    const timers = [];
 
     return {
         onLoad: function() {
             apply();
             sub = bunny.metro.common.ReactNative.AppState?.addEventListener("change", state => {
                 if (state === "active") {
-                    apply();
-                    refreshOpenChannel();
+                    sync();
+                    timers.push(setTimeout(sync, 150), setTimeout(sync, 500));
                 }
             });
         },
         onUnload: function() {
             sub?.remove?.();
+            timers.forEach(clearTimeout);
+            timers.length = 0;
         }
     };
 })();
