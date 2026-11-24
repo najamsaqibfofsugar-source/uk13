@@ -9,49 +9,38 @@
             LLLL: "dddd, D MMMM YYYY h:mm A"
         };
 
-    const apply = () => {
+    const applyMoment = () => {
+        if (!m) return;
         [m.locale(), "en-gb", "en"].forEach(l => m.updateLocale(l, { longDateFormat: f }));
         m.locale(m.locale());
     };
 
-    const refreshOpenChannel = () => {
-        try {
-            const channelId = bunny.metro.findByStoreName("SelectedChannelStore")?.getChannelId();
-            const messages = bunny.metro.findByStoreName("MessageStore")?.getMessages(channelId)?._array;
-            const FluxDispatcher = bunny.metro.common.FluxDispatcher;
-            if (!channelId || !messages?.length || !FluxDispatcher) return;
-
-            messages.slice(-15).forEach(msg => {
-                FluxDispatcher.dispatch({
-                    type: "MESSAGE_UPDATE",
-                    message: typeof msg.toJS === "function" ? msg.toJS() : { ...msg }
-                });
-            });
-        } catch (_) {}
-    };
-
-    const sync = () => {
-        apply();
-        refreshOpenChannel();
-    };
+    // Force 12-hour clock globally in Intl.DateTimeFormat while preserving DD/MM/YYYY
+    const OrigDTF = Intl.DateTimeFormat;
+    function PatchedDTF(locales, options) {
+        const opts = options ? { ...options } : {};
+        if (opts.hour !== undefined || opts.timeStyle !== undefined) {
+            opts.hour12 = true;
+            delete opts.hourCycle;
+        }
+        return new OrigDTF(locales, opts);
+    }
+    PatchedDTF.prototype = OrigDTF.prototype;
+    PatchedDTF.supportedLocalesOf = OrigDTF.supportedLocalesOf.bind(OrigDTF);
 
     let sub;
-    const timers = [];
 
     return {
         onLoad: function() {
-            apply();
+            Intl.DateTimeFormat = PatchedDTF;
+            applyMoment();
             sub = bunny.metro.common.ReactNative.AppState?.addEventListener("change", state => {
-                if (state === "active") {
-                    sync();
-                    timers.push(setTimeout(sync, 150), setTimeout(sync, 500));
-                }
+                if (state === "active") applyMoment();
             });
         },
         onUnload: function() {
+            Intl.DateTimeFormat = OrigDTF;
             sub?.remove?.();
-            timers.forEach(clearTimeout);
-            timers.length = 0;
         }
     };
 })();
