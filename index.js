@@ -8,28 +8,51 @@
         LLLL: "dddd, D MMMM YYYY h:mm A"
     };
 
-    const apply = () => {
+    const targets = new Set(["en-gb", "en"]);
+    const unpatches = [];
+
+    const forceFormat = (m) => {
+        const cur = m.locale();
+        if (cur) targets.add(cur);
+
+        targets.forEach(l => {
+            const data = m.localeData(l);
+            if (data && data._longDateFormat) {
+                Object.assign(data._longDateFormat, f);
+            }
+        });
+    };
+
+    const init = () => {
         const m = bunny?.metro?.findByProps?.("updateLocale", "defineLocale");
         if (!m) return false;
 
-        const cur = m.locale();
-        const targets = new Set([cur, "en-gb", "en"]);
-        
-        targets.forEach(l => {
-            if (l) m.updateLocale(l, { longDateFormat: f });
-        });
+        // 1. Apply immediately
+        forceFormat(m);
 
-        // Force moment to refresh active locale cache immediately
-        if (cur) m.locale(cur);
+        // 2. Patch moment functions so Discord can never overwrite them on app resume
+        if (bunny?.patcher?.after && unpatches.length === 0) {
+            ["locale", "updateLocale", "defineLocale"].forEach(fn => {
+                if (typeof m[fn] === "function") {
+                    unpatches.push(
+                        bunny.patcher.after(fn, m, () => forceFormat(m))
+                    );
+                }
+            });
+        }
+
+        // Refresh active locale
+        m.locale(m.locale());
         return true;
     };
 
-    // 1. Run immediately upon script evaluation (fastest possible execution)
-    apply();
+    init();
 
-    // 2. Keep onLoad as a safety fallback in case Metro wasn't ready at eval time
     return {
-        onLoad: apply,
-        onUnload: () => {}
+        onLoad: init,
+        onUnload: () => {
+            unpatches.forEach(u => u());
+            unpatches.length = 0;
+        }
     };
 })();
