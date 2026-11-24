@@ -1,0 +1,1 @@
+(function(){const m=bunny.metro.findByProps("updateLocale","defineLocale"),f={LT:"h:mm A",LTS:"h:mm:ss A",L:"DD/MM/YYYY",LL:"D MMMM YYYY",LLL:"D MMMM YYYY h:mm A",LLLL:"dddd, D MMMM YYYY h:mm A"};return{onLoad:function(){[m.locale(),"en-gb","en"].forEach(l=>m.updateLocale(l,{longDateFormat:f}));m.locale(m.locale())},onUnload:function(){}}})();
