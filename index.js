@@ -9,38 +9,63 @@
             LLLL: "dddd, D MMMM YYYY h:mm A"
         };
 
-    const applyMoment = () => {
+    const apply = () => {
         if (!m) return;
         [m.locale(), "en-gb", "en"].forEach(l => m.updateLocale(l, { longDateFormat: f }));
         m.locale(m.locale());
     };
 
-    // Force 12-hour clock globally in Intl.DateTimeFormat while preserving DD/MM/YYYY
-    const OrigDTF = Intl.DateTimeFormat;
-    function PatchedDTF(locales, options) {
-        const opts = options ? { ...options } : {};
-        if (opts.hour !== undefined || opts.timeStyle !== undefined) {
-            opts.hour12 = true;
-            delete opts.hourCycle;
-        }
-        return new OrigDTF(locales, opts);
+    const refreshOpenChannel = () => {
+        try {
+            const channelId = bunny.metro.findByStoreName("SelectedChannelStore")?.getChannelId();
+            const messages = bunny.metro.findByStoreName("MessageStore")?.getMessages(channelId)?._array;
+            const FluxDispatcher = bunny.metro.common.FluxDispatcher;
+            if (!channelId || !messages?.length || !FluxDispatcher) return;
+
+            messages.slice(-30).forEach(msg => {
+                FluxDispatcher.dispatch({
+                    type: "MESSAGE_UPDATE",
+                    message: typeof msg.toJS === "function" ? msg.toJS() : { ...msg }
+                });
+            });
+        } catch (_) {}
+    };
+
+    // Lock Moment.prototype.format immediately so HH:mm can NEVER be output
+    const patcher = bunny?.patcher || window.vendetta?.patcher;
+    let unpatchFormat;
+    if (m?.fn?.format && patcher?.before) {
+        unpatchFormat = patcher.before("format", m.fn, (args) => {
+            if (typeof args === "string") {
+                args = args
+                    .replace(/HH:mm:ss/g, "h:mm:ss A")
+                    .replace(/HH:mm/g, "h:mm A");
+            }
+        });
     }
-    PatchedDTF.prototype = OrigDTF.prototype;
-    PatchedDTF.supportedLocalesOf = OrigDTF.supportedLocalesOf.bind(OrigDTF);
+
+    apply();
 
     let sub;
+    const timers = [];
 
     return {
         onLoad: function() {
-            Intl.DateTimeFormat = PatchedDTF;
-            applyMoment();
+            apply();
+            refreshOpenChannel();
             sub = bunny.metro.common.ReactNative.AppState?.addEventListener("change", state => {
-                if (state === "active") applyMoment();
+                if (state === "active") {
+                    apply();
+                    refreshOpenChannel();
+                    timers.push(setTimeout(refreshOpenChannel, 250));
+                }
             });
         },
         onUnload: function() {
-            Intl.DateTimeFormat = OrigDTF;
+            unpatchFormat?.();
             sub?.remove?.();
+            timers.forEach(clearTimeout);
+            timers.length = 0;
         }
     };
 })();
