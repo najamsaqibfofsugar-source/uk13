@@ -8,48 +8,55 @@
         LLLL: "dddd, D MMMM YYYY h:mm A"
     };
 
-    const targets = new Set(["en-gb", "en"]);
+    let updating = false;
     const unpatches = [];
 
-    const forceFormat = (m) => {
-        const cur = m.locale();
-        if (cur) targets.add(cur);
+    const apply = () => {
+        if (updating) return;
+        const m = bunny?.metro?.findByProps?.("updateLocale", "defineLocale");
+        if (!m) return;
 
-        targets.forEach(l => {
-            const data = m.localeData(l);
-            if (data && data._longDateFormat) {
-                Object.assign(data._longDateFormat, f);
-            }
-        });
+        updating = true;
+        try {
+            const cur = m.locale();
+            [...new Set([cur, "en-gb", "en"])].forEach(l => {
+                if (l) m.updateLocale(l, { longDateFormat: f });
+            });
+            if (cur) m.locale(cur);
+        } finally {
+            updating = false;
+        }
     };
 
-    const init = () => {
+    const start = () => {
+        apply();
+
         const m = bunny?.metro?.findByProps?.("updateLocale", "defineLocale");
-        if (!m) return false;
+        const patcher = bunny?.patcher || window.vendetta?.patcher;
 
-        // 1. Apply immediately
-        forceFormat(m);
-
-        // 2. Patch moment functions so Discord can never overwrite them on app resume
-        if (bunny?.patcher?.after && unpatches.length === 0) {
-            ["locale", "updateLocale", "defineLocale"].forEach(fn => {
+        // 1. Re-apply whenever Discord touches Moment's locale methods
+        if (m && patcher?.after && unpatches.length === 0) {
+            ["updateLocale", "defineLocale", "locale"].forEach(fn => {
                 if (typeof m[fn] === "function") {
-                    unpatches.push(
-                        bunny.patcher.after(fn, m, () => forceFormat(m))
-                    );
+                    unpatches.push(patcher.after(fn, m, apply));
                 }
             });
         }
 
-        // Refresh active locale
-        m.locale(m.locale());
-        return true;
+        // 2. Re-apply whenever the app wakes up from background sleep
+        const AppState = bunny?.metro?.common?.ReactNative?.AppState;
+        if (AppState?.addEventListener) {
+            const sub = AppState.addEventListener("change", state => {
+                if (state === "active") apply();
+            });
+            if (sub?.remove) unpatches.push(() => sub.remove());
+        }
     };
 
-    init();
+    start();
 
     return {
-        onLoad: init,
+        onLoad: start,
         onUnload: () => {
             unpatches.forEach(u => u());
             unpatches.length = 0;
