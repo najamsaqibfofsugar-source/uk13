@@ -28,7 +28,6 @@
 
             messages.slice(-20).forEach(msg => {
                 if (!msg?.id || !msg?.channel_id) return;
-                // Pass only serializable primitive/JSON fields so native Android never crashes
                 FluxDispatcher.dispatch({
                     type: "MESSAGE_UPDATE",
                     message: {
@@ -43,17 +42,32 @@
         } catch (_) {}
     };
 
+    // 1. Lock Moment.prototype.format permanently (fixes array indexing bug in args)
     const patcher = bunny?.patcher || window.vendetta?.patcher;
     let unpatchFormat;
     if (m?.fn?.format && patcher?.before) {
         unpatchFormat = patcher.before("format", m.fn, (args) => {
-            if (typeof args[0] === "string") {
-                args[0] = args[0]
+            if (typeof args === "string") {
+                args = args
                     .replace(/HH:mm:ss/g, "h:mm:ss A")
                     .replace(/HH:mm/g, "h:mm A");
             }
         });
     }
+
+    // 2. Lock Intl.DateTimeFormat globally so native/i18n formatters never fall back to 24h
+    const OrigDTF = Intl.DateTimeFormat;
+    function PatchedDTF(locales, options) {
+        const opts = options ? { ...options } : {};
+        if (opts.hour !== undefined || opts.timeStyle !== undefined) {
+            opts.hour12 = true;
+            delete opts.hourCycle;
+        }
+        return new OrigDTF(locales, opts);
+    }
+    PatchedDTF.prototype = OrigDTF.prototype;
+    PatchedDTF.supportedLocalesOf = OrigDTF.supportedLocalesOf.bind(OrigDTF);
+    Intl.DateTimeFormat = PatchedDTF;
 
     apply();
 
@@ -64,14 +78,18 @@
         onLoad: function() {
             apply();
             sub = bunny.metro.common.ReactNative.AppState?.addEventListener("change", state => {
+                apply();
+                refreshOpenChannel();
                 if (state === "active") {
-                    apply();
-                    refreshOpenChannel();
-                    timers.push(setTimeout(refreshOpenChannel, 250));
+                    timers.push(setTimeout(() => {
+                        apply();
+                        refreshOpenChannel();
+                    }, 150));
                 }
             });
         },
         onUnload: function() {
+            Intl.DateTimeFormat = OrigDTF;
             unpatchFormat?.();
             sub?.remove?.();
             timers.forEach(clearTimeout);
